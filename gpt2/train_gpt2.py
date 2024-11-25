@@ -10,17 +10,17 @@ class CausalSelfAttention(nn.Module):
     
     def __init__(self, config):
         super().__init__()
-        assert config.n_embed % config.n_head == 0
-        self.c_attn = nn.Linear(config.n_embed, config.n_embed * 3)
-        self.c_proj = nn.Linear(config.n_embed, config.n_embed)
+        assert config.n_embd % config.n_head == 0
+        self.c_attn = nn.Linear(config.n_embd, config.n_embd * 3)
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         self.n_head = config.n_head
-        self.n_embed = config.n_embed
-        self.register_buffer("bias", torch.tril(torch.ones(config. , config.block_size)).view(1, 1, config.block_size, config.block_size))
+        self.n_embd = config.n_embd
+        self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size)).view(1, 1, config.block_size, config.block_size))
 
     def forward(self, x):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionlaity (n_embed)
+        B, T, C = x.size() # batch size, sequence length, embedding dimensionlaity (n_embd)
         qkv = self.c_attn(x)
-        q, k, v = qkv.split(self.n_embed, dim=2)
+        q, k, v = qkv.split(self.n_embd, dim=2)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
@@ -36,9 +36,9 @@ class MLP(nn.Module):
     
     def __init__(self, config):
         super().__init__()
-        self.c_fc = nn.Linear(config.n_embed, config.n_embed * 4)
+        self.c_fc = nn.Linear(config.n_embd, config.n_embd * 4)
         self.gelu = nn.GELU(approximate='tanh')
-        self.c_proj = nn.Linear(config.n_embed * 4, config.n_embed)
+        self.c_proj = nn.Linear(config.n_embd * 4, config.n_embd)
 
     def forward(self, x):
         x = self.c_fc(x)
@@ -49,9 +49,9 @@ class MLP(nn.Module):
 class Block(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.ln_1 = nn.LayerNorm(config.n_embed)
+        self.ln_1 = nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
-        self.ln_2 = nn.LayerNorm(config.n_embed)
+        self.ln_2 = nn.LayerNorm(config.n_embd)
         self.mlp = MLP(config)
     
     def forward(self, x):
@@ -64,8 +64,8 @@ class GPTConfig:
     block_size: int = 1024
     vocab_size: int = 50257
     n_layer: int = 12
-    n_head = 12
-    n_embd = 768
+    n_head: int = 12
+    n_embd: int = 768
 
 class GPT(nn.Module):
 
@@ -74,18 +74,18 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embed),
-            wpe = nn.Embedding(config.block_size, config.n_embed),
+            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wpe = nn.Embedding(config.block_size, config.n_embd),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
-            ln_f = nn.LayerNorm(config.n_embed),
+            ln_f = nn.LayerNorm(config.n_embd),
         ))
-        self.lm_head = nn.Linear(config.n_embed, config.vocab_size, bias=False)
+        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
     @classmethod
     def from_pretrained(cls, model_type):
         """ Loads pretrained GPT-2 model weights from huggingface"""
         assert model_type in {'gpt2', 'gpt2-medium', 'gpt2-large', 'gpt2-xl'}
-        from transformer import GPT2LMHeadModel
+        from transformers import GPT2LMHeadModel
         print(f"Loading pretrained model {model_type}")
 
         config_args = {
@@ -103,14 +103,14 @@ class GPT(nn.Module):
 
         sd = model.state_dict()
         sd_keys = sd.keys()
-        sd_keys = [k for k in sd_keys if not k.endswith['attn_bias']]
+        sd_keys = [k for k in sd_keys if not k.endswith('.attn_bias')]
 
         model_hf = GPT2LMHeadModel.from_pretrained(model_type)
         sd_hf = model_hf.state_dict()
 
         sd_keys_hf = sd_hf.keys()
-        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith['attn.bias']]
-        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith['attn.masked_bias']]
+        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn_bias')]
+        sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')]
         transposed = ['attn.c_attn.weight', 'attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
 
         assert len(sd_keys) == len(sd_keys_hf), f"Length mismatch: {len(sd_keys)} != {len(sd_keys_hf)}"
@@ -125,3 +125,6 @@ class GPT(nn.Module):
                     sd[k].copy_(sd_hf[k])
 
         return model
+
+model = GPT.from_pretrained('gpt2')
+print("didn't crash")
