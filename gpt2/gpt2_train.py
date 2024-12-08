@@ -82,7 +82,7 @@ class GPT(nn.Module):
         ))
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
-    def forward(self, idx):
+    def forward(self, idx, targets=None):
       B, T = idx.size()
       assert T <= self.config.block_size, f"T cannot be greater than block size"
       pos = torch.arange(0, T, dtype=torch.long, device=idx.device) # shape (T)
@@ -94,8 +94,10 @@ class GPT(nn.Module):
         x = block(x)
       
       logits = self.lm_head(self.transformer.ln_f(x))
-      return logits
-
+      loss = None
+      if targets is not None:
+          loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+      return logits, loss
 
     @classmethod
     def from_pretrained(cls, model_type):
@@ -154,15 +156,31 @@ if torch.cuda.is_available():
     device ='cuda'
 print("device: ", device)
 
-num_return_sequences = 5
-max_length = 30
+# Simple data loader
+enc = tiktoken.get_encoding('gpt2')
+with open('input.txt', 'r') as f:
+    text = f.read()
+data = text[:1000]
+tokens = enc.encode(data)
+B, T = 4, 32
+buf = torch.tensor(tokens[:B*T+1])
+x = buf[:-1].view(B, T)
+y = buf[1:].view(B, T)
 
+
+# num_return_sequences = 5
+# max_length = 30
 
 # model configuration
 model = GPT(GPTConfig())
 model.eval()
 model.to(device)
-print("didn't crash ")
+logits, loss = model(x, y)
+print("loss: ", loss)
+print(logits.shape)
+import sys; sys.exit(0)
+
+
 
 # Encode a prompt
 enc = tiktoken.get_encoding('gpt2')
