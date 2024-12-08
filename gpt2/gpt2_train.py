@@ -1,8 +1,9 @@
 import math
-from dataclasses import dataclass
+import tiktoken
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from dataclasses import dataclass
 
 # --------------------------------------------------------------
 
@@ -145,26 +146,37 @@ class GPT(nn.Module):
 
         return model
 
+# --------------------------------------------------------------
+
+# device
+device = 'cpu'
+if torch.cuda.is_available():
+    device ='cuda'
+print("device: ", device)
+
 num_return_sequences = 5
 max_length = 30
 
+
+# model configuration
 model = GPT(GPTConfig())
 model.eval()
-model.to('cuda')
-print("didn't crash")
+model.to(device)
+print("didn't crash ")
 
-import tiktoken
+# Encode a prompt
 enc = tiktoken.get_encoding('gpt2')
 tokens = enc.encode("Hello, I'm a language model,")
 tokens = torch.tensor(tokens, dtype=torch.long)
 tokens = tokens.unsqueeze(0).repeat(num_return_sequences, 1)
-x = tokens.to('cuda')
-
+x = tokens.to(device)
 print(x)
 
+# Seed
 torch.manual_seed(42)
 torch.cuda.manual_seed(42)
 
+# Generate
 while x.size(1) < max_length:
   with torch.no_grad():
     logits = model(x)
