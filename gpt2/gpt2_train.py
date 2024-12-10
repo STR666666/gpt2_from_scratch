@@ -28,10 +28,13 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, nh, T, hs)
 
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (b, nh, T, T)
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        y = att @ v # (B, nh, T, hs)
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+        # traditional way of computing self-attention
+        # att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1))) # (b, nh, T, T)
+        # att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        # att = F.softmax(att, dim=-1)
+        # y = att @ v # (B, nh, T, hs)
+
         y = y.transpose(1,2).contiguous().view(B, T, C) # (B, T, C)
         y = self.c_proj(y)
         return y
@@ -196,7 +199,25 @@ class DataLoaderLite():
         if self.current_position + (B* T + 1) >= len(self.tokens):
             self.current_position = 0
         return x, y
-        
+
+# --------------------------------------------------------------
+
+max_lr = 6e-4
+min_lr = max_lr * 0.1
+warmup_steps = 10
+max_steps = 50
+
+def get_lr(it):
+    if it < warmup_steps:
+        return max_lr * (it+1) / warmup_steps
+    if it > max_steps:
+        return min_lr
+    
+    decay_ratio = (it - warmup_steps) / (max_steps - warmup_steps)
+    assert 0 <= decay_ratio <= 1
+    coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
+    return min_lr + coeff * (max_lr - min_lr)
+
 # device
 device = 'cpu'
 if torch.cuda.is_available():
@@ -212,28 +233,30 @@ train_loader = DataLoaderLite(16, 1024)
 torch.set_float32_matmul_precision('high')
 
 # model configuration
-model = GPT(GPTConfig())
+model = GPT(GPTConfig(vocab_size=50304))
 model.to(device)
-model = torch.compile(model) 
+model = torch.compile(model)
 
 # optimization
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-for i in range(50):
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, betas=(0.9, 0.95), eps=1e-8)
+for step in range(max_steps):
     t0 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-
     with torch.autocast(device_type = device, dtype=torch.bfloat16):
         logits, loss = model(x,y)
-
     loss.backward()
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    lr = get_lr(step)
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = lr
     optimizer.step()
     torch.cuda.synchronize()
     t1 = time.time()
     dt = (t1 - t0) * 1000
     tokens_per_sec = (train_loader.B * train_loader.T) / (t1 - t0)
-    print(f"step {i}, loss: {loss.item()}, dt: {dt:.2f}ms, tokens/sec: {tokens_per_sec:.2f}")
+    print(f"step {step}, loss: {loss.item()} | norm: {norm:4f} | dt: {dt:.2f}ms | tokens/sec: {tokens_per_sec:.2f}")
 
 import sys; sys.exit(0)
 
