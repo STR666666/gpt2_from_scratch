@@ -1,6 +1,6 @@
 # gpt2_from_scratch
 ### Reconstruct GPT 2
-It is a small GPT model that can only be used on 1 GPU
+Similar overall architecture as GPT 2
 
 Current dataset: Shakespeare poems
 
